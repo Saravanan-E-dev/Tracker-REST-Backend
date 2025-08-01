@@ -39,6 +39,16 @@ const TransactionsSchema = mongoose.Schema({
   date: { type: Date, default: Date.now }
 });
 
+const SavingsSchema = mongoose.Schema({
+  userId: String,
+  name: String,
+  amount: Number,
+  medium: String,
+  date: { type: Date, default: Date.now },
+  index:Number
+});
+
+
 const BalanceSchema = mongoose.Schema({
   userId: String,
   OnlineBalance: Number,
@@ -46,6 +56,8 @@ const BalanceSchema = mongoose.Schema({
   TotalBalance: Number,
 });
 
+
+const SavingsData = mongoose.model('SavingsData', SavingsSchema);
 const BalanceData = mongoose.model('BalanceData', BalanceSchema);
 const TransactionsData = mongoose.model('TransactionsData', TransactionsSchema);
 const ExpenseData = mongoose.model('ExpenseData', ExpenseDataSchema);
@@ -155,14 +167,89 @@ app.get('/api/get/balance/:userId', async(req, res) => {
     const balanceData = await BalanceData.findOne({ userId });
     if (!balanceData) {
       return res.status(404).json({ message: 'Balance data not found' });
-    }
-    res.status(200).json(balanceData);
+    } 
+    res.status(200).json(balanceData);  
   } catch (error) {
     console.error('Error fetching balance data:', error);
     res.status(500).json({ message: 'Error fetching balance data' }, error);
   }
 });
 
+//Savings API
+//AddSavingsData(savingsData)
+app.post('/api/save/savings/:userId', async(req, res) => {
+  try {
+    const { userId } = req.params;
+    const { name, amount, medium } = req.body;
+    const count = await SavingsData.countDocuments({ userId }); // Get the next index for the savings data
+    const i = (count+1) || 1; // Use the count as the index
+    const newSavingsData = new SavingsData({
+      userId,
+      name,
+      amount,
+      medium,
+      index:i
+    });
+    const savedSavingsData = await newSavingsData.save();
+    res.status(200).json({ message: 'Savings data saved successfully' }, savedSavingsData);
+  } catch (error) {
+    console.error('Error saving savings data:', error);
+    res.status(500).json({ message: 'Error saving savings data' }, error);
+  }
+});
+
+//getSavingsData()
+app.get('/api/get/savings/:userId', async(req, res) => {
+  try {
+    const { userId } = req.params;
+    const savingsData = await SavingsData.find({ userId });
+    if (!savingsData) {
+      return res.status(404).json({ message: 'Savings data not found' });
+    }
+    res.status(200).json(savingsData);
+  } catch (error) {
+    console.error('Error fetching savings data:', error);
+    res.status(500).json({ message: 'Error fetching savings data' }, error);
+  }
+});
+
+//removeSavingsElement(i)
+app.delete('/api/delete/savings/:userId', async(req, res) => {
+  try {
+    const { userId } = req.params;
+    const {i} = req.body;
+    const deletedSavingsData = await SavingsData.deleteOne({ userId, index: i });
+    // Check if any savings data was deleted
+    if (deletedSavingsData.deletedCount === 0) {
+      return res.status(404).json({ message: 'No savings data found for this user' });
+    }
+    res.status(200).json({ message: 'Savings data deleted successfully' }, deletedSavingsData);
+  } catch (error) {
+    console.error('Error deleting savings data:', error);
+    res.status(500).json({ message: 'Error deleting savings data' }, error);
+  }
+});
+
+//updateSavingsElement(index,newData)
+app.patch('/api/update/savings/:userId', async(req, res) => {
+  try {
+    const { userId } = req.params;
+    console.log(userId);
+    const { i, name, amount, medium } = req.body;
+    const updatedSavingsData = await SavingsData.findOneAndUpdate(
+      { userId, index: i },
+      { name, amount, medium },
+      { new: true }
+    );
+    if (!updatedSavingsData) {
+      return res.status(404).json({ message: 'Savings data not found' });
+    }
+    res.status(200).json({ message: 'Savings data updated successfully' }, updatedSavingsData);
+  } catch (error) {
+    console.error('Error updating savings data:', error);
+    res.status(500).json({ message: 'Error updating savings data' }, error);
+  }
+});
 //start the server
 app.listen(PORT, () => {
   console.log(`Server is running at http://localhost:${PORT}`);

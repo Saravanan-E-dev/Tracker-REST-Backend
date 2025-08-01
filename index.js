@@ -11,15 +11,15 @@ const PORT = process.env.PORT;
 
 //connect to mongodb
 mongoose.connect(MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    })
-.then(() => {
-    console.log('Connected to MongoDB');
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
 })
-.catch((error) => {
+  .then(() => {
+    console.log('Connected to MongoDB');
+  })
+  .catch((error) => {
     console.error('MongoDB connection error:', error);
-});
+  });
 
 const app = express();
 app.use(express.json());
@@ -45,7 +45,7 @@ const SavingsSchema = mongoose.Schema({
   amount: Number,
   medium: String,
   date: { type: Date, default: Date.now },
-  index:Number
+  index: Number
 });
 
 
@@ -67,38 +67,38 @@ app.get('/', (req, res) => {
 });
 
 //function saveExpenseData(objData)
-app.post('/api/save/ExpenseData', async(req, res) => {
-  try{
-    const {amount,remark,spentFromState} = req.body; 
+app.post('/api/save/ExpenseData', async (req, res) => {
+  try {
+    const { amount, remark, spentFromState } = req.body;
     const newExpenseData = new ExpenseData({
       amount,
       remark,
       spentFromState
     });
     const savedExpenseData = await newExpenseData.save();
-    res.status(200).json({ message: 'Expense data saved successfully' },savedExpenseData);
-  }catch (error) {
+    res.status(200).json({ message: 'Expense data saved successfully' }, savedExpenseData);
+  } catch (error) {
     console.error('Error saving expense data:', error);
-    res.status(500).json({ message: 'Error saving expense data' },error);
+    res.status(500).json({ message: 'Error saving expense data' }, error);
   }
-  
+
 });
 
 //export function getExpenseData(DataName)
-app.get('/api/get/ExpenseData', async(req, res) => {
+app.get('/api/get/ExpenseData', async (req, res) => {
   try {
     const expenseData = await ExpenseData.find();
     res.status(200).json(expenseData);
   } catch (error) {
     console.error('Error fetching expense data:', error);
-    res.status(500).json({ message: 'Error fetching expense data' },error);
+    res.status(500).json({ message: 'Error fetching expense data' }, error);
   }
 });
 
 //export function setTransactions(DataObject)
-app.post('/api/save/setTransactions', async(req, res) => {
-  try{
-    const {amount, remark, medium} = req.body;
+app.post('/api/save/setTransactions', async (req, res) => {
+  try {
+    const { amount, remark, medium } = req.body;
     const newTransaction = new TransactionsData({
       amount,
       remark,
@@ -106,30 +106,30 @@ app.post('/api/save/setTransactions', async(req, res) => {
     });
     const savedTransaction = await newTransaction.save();
     res.status(200).json({ message: 'Transaction saved successfully' }, savedTransaction);
-  }catch (error) {
+  } catch (error) {
     console.error('Error saving transactions:', error);
-    res.status(500).json({ message: 'Error saving transactions' },error);
+    res.status(500).json({ message: 'Error saving transactions' }, error);
   }
 });
 
 //export function getTransactions()
-app.get('/api/get/TransactionsData', async(req, res) => {
+app.get('/api/get/TransactionsData', async (req, res) => {
   try {
     const transactionsData = await TransactionsData.find().sort({ createdAt: -1 });
     res.status(200).json(transactionsData);
   } catch (error) {
     console.error('Error fetching transactions data:', error);
-    res.status(500).json({ message: 'Error fetching transactions data' },error);
+    res.status(500).json({ message: 'Error fetching transactions data' }, error);
   }
 });
 
 //Balance API
 //AddOnlineBalance(BalanceData),
 //AddOfflineBalance(BalanceData)
-app.post('/api/save/balance/:userId', async(req, res) => {
+app.post('/api/save/balance/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const { OnlineBalance,OfflineBalance,TotalBalance } = req.body;
+    const { OnlineBalance, OfflineBalance, TotalBalance } = req.body;
     const UpdatedTotalBalance = OnlineBalance + OfflineBalance;
 
     // update or create balance data
@@ -150,7 +150,7 @@ app.post('/api/save/balance/:userId', async(req, res) => {
     });
 
     const savedBalanceData = await newBalanceData.save();
-    res.status(200).json({ message: 'Balance data saved successfully' },savedBalanceData);
+    res.status(200).json({ message: 'Balance data saved successfully' }, savedBalanceData);
   } catch (error) {
     console.error('Error saving balance:', error);
     res.status(500).json({ message: 'Error fetching balance' }, error);
@@ -161,14 +161,14 @@ app.post('/api/save/balance/:userId', async(req, res) => {
 //getTotalBalance()
 //getOnlineBalance()
 //getOfflineBalance()
-app.get('/api/get/balance/:userId', async(req, res) => {
+app.get('/api/get/balance/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const balanceData = await BalanceData.findOne({ userId });
     if (!balanceData) {
       return res.status(404).json({ message: 'Balance data not found' });
-    } 
-    res.status(200).json(balanceData);  
+    }
+    res.status(200).json(balanceData);
   } catch (error) {
     console.error('Error fetching balance data:', error);
     res.status(500).json({ message: 'Error fetching balance data' }, error);
@@ -177,18 +177,18 @@ app.get('/api/get/balance/:userId', async(req, res) => {
 
 //Savings API
 //AddSavingsData(savingsData)
-app.post('/api/save/savings/:userId', async(req, res) => {
+app.post('/api/save/savings/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { name, amount, medium } = req.body;
     const count = await SavingsData.countDocuments({ userId }); // Get the next index for the savings data
-    const i = (count+1) || 1; // Use the count as the index
+    const i = (count + 1) || 1; // Use the count as the index
     const newSavingsData = new SavingsData({
       userId,
       name,
       amount,
       medium,
-      index:i
+      index: i
     });
     const savedSavingsData = await newSavingsData.save();
     res.status(200).json({ message: 'Savings data saved successfully' }, savedSavingsData);
@@ -199,14 +199,20 @@ app.post('/api/save/savings/:userId', async(req, res) => {
 });
 
 //getSavingsData()
-app.get('/api/get/savings/:userId', async(req, res) => {
+app.get('/api/get/savings/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const savingsData = await SavingsData.find({ userId });
-    if (!savingsData) {
-      return res.status(404).json({ message: 'Savings data not found' });
+    const { i } = req.query;
+
+    if (!i) {
+      const savingsData = await SavingsData.find({ userId });
+      if (!savingsData) {
+        return res.status(404).json({ message: 'Savings data not found' });
+      }
+      return res.status(200).json(savingsData);
     }
-    res.status(200).json(savingsData);
+    const savingsData = await SavingsData.findOne({ userId, index: i });
+    return res.status(200).json(savingsData);
   } catch (error) {
     console.error('Error fetching savings data:', error);
     res.status(500).json({ message: 'Error fetching savings data' }, error);
@@ -214,10 +220,10 @@ app.get('/api/get/savings/:userId', async(req, res) => {
 });
 
 //removeSavingsElement(i)
-app.delete('/api/delete/savings/:userId', async(req, res) => {
+app.delete('/api/delete/savings/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const {i} = req.body;
+    const { i } = req.body;
     const deletedSavingsData = await SavingsData.deleteOne({ userId, index: i });
     // Check if any savings data was deleted
     if (deletedSavingsData.deletedCount === 0) {
@@ -231,7 +237,7 @@ app.delete('/api/delete/savings/:userId', async(req, res) => {
 });
 
 //updateSavingsElement(index,newData)
-app.patch('/api/update/savings/:userId', async(req, res) => {
+app.patch('/api/update/savings/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     console.log(userId);

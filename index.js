@@ -3,6 +3,10 @@ dotenv.config();
 
 import express from 'express';
 import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
+import JWT from 'jsonwebtoken';
+import getNextSequence from './utils/userIdSequenceGenrator.js';
+import auth from './middleware/auth.js';
 
 const MONGO_URI = process.env.MONGO_URI;
 const PORT = process.env.PORT;
@@ -56,7 +60,29 @@ const BalanceSchema = mongoose.Schema({
   TotalBalance: Number,
 });
 
+const UserSchema = new mongoose.Schema({
+  userId: {
+    type: Number,
+    unique: true, // Ensure uniqueness
+    required: true,
+  },
+  username: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  password: {
+    type: String,
+    required: true,
+  },
+});
 
+const UserData = mongoose.model('UserData', UserSchema);
 const SavingsData = mongoose.model('SavingsData', SavingsSchema);
 const BalanceData = mongoose.model('BalanceData', BalanceSchema);
 const TransactionsData = mongoose.model('TransactionsData', TransactionsSchema);
@@ -66,28 +92,66 @@ app.get('/', (req, res) => {
   res.json({ message: 'working' });
 });
 
-//function saveExpenseData(objData)
-app.post('/api/save/ExpenseData', async (req, res) => {
+//Register endpoint
+app.post('/api/register',auth, async (req, res) => {
   try {
-    const { amount, remark, spentFromState } = req.body;
-    const newExpenseData = new ExpenseData({
-      amount,
-      remark,
-      spentFromState
+    const { username, email, password } = req.body;
+    const newCustomUserId = await getNextSequence('userId');
+    // Check if user already exists
+    const existingUser = await UserData.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = new UserData({
+      userId: newCustomUserId,
+      username,
+      email,
+      password: hashedPassword,
     });
-    const savedExpenseData = await newExpenseData.save();
-    res.status(200).json({ message: 'Expense data saved successfully' }, savedExpenseData);
+    const savedUser = await newUser.save();
+    // Generate JWT token
+    const token = JWT.sign({ userId: savedUser.userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.status(201).json({ message: 'User registered successfully', token });
   } catch (error) {
-    console.error('Error saving expense data:', error);
-    res.status(500).json({ message: 'Error saving expense data' }, error);
+    console.error('Error registering user:', error);
+    res.status(500).json({ message: 'Error registering user' });
   }
+});
 
+//login endpoint
+app.post('/api/login',auth, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    // Find user by email
+    const user = await UserData.findOne({ email });
+    if (!user || user.length === 0) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+    // Compare password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+    // Generate JWT token
+    const token = JWT.sign({ userId: user.userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.status(200).json({ message: 'Login successful', token });
+  } catch (error) {
+    console.error('Error logging in user:', error);
+    res.status(500).json({ message: 'Error logging in user' });
+  }
 });
 
 //export function getExpenseData(DataName)
-app.get('/api/get/ExpenseData', async (req, res) => {
+app.get('/api/get/ExpenseData',auth, async (req, res) => {
   try {
-    const expenseData = await ExpenseData.find();
+    const { userId } = req.userId;
+    //find the expense data for the user
+    const expenseData = await ExpenseData.find({ userId: decoded.userId });
+    if (!expenseData || expenseData.length === 0) {
+      return res.status(404).json({ message: 'No expense data found' });
+    }
     res.status(200).json(expenseData);
   } catch (error) {
     console.error('Error fetching expense data:', error);
@@ -95,11 +159,14 @@ app.get('/api/get/ExpenseData', async (req, res) => {
   }
 });
 
+
 //export function setTransactions(DataObject)
-app.post('/api/save/setTransactions', async (req, res) => {
+app.post('/api/save/setTransactions',auth, async (req, res) => {
   try {
+    const { userId } = req.userId;
     const { amount, remark, medium } = req.body;
     const newTransaction = new TransactionsData({
+      userId,
       amount,
       remark,
       medium
@@ -113,9 +180,11 @@ app.post('/api/save/setTransactions', async (req, res) => {
 });
 
 //export function getTransactions()
-app.get('/api/get/TransactionsData', async (req, res) => {
+app.get('/api/get/TransactionsData',auth, async (req, res) => {
+
   try {
-    const transactionsData = await TransactionsData.find().sort({ createdAt: -1 });
+    const { userId } = req.userId;
+    const transactionsData = await TransactionsData.find({ userId }).sort({ createdAt: -1 });
     res.status(200).json(transactionsData);
   } catch (error) {
     console.error('Error fetching transactions data:', error);
@@ -126,9 +195,10 @@ app.get('/api/get/TransactionsData', async (req, res) => {
 //Balance API
 //AddOnlineBalance(BalanceData),
 //AddOfflineBalance(BalanceData)
-app.post('/api/save/balance/:userId', async (req, res) => {
+app.post('/api/save/balance',auth, async (req, res) => {
+
   try {
-    const { userId } = req.params;
+    const { userId } = req.userId;
     const { OnlineBalance, OfflineBalance, TotalBalance } = req.body;
     const UpdatedTotalBalance = OnlineBalance + OfflineBalance;
 
@@ -161,9 +231,10 @@ app.post('/api/save/balance/:userId', async (req, res) => {
 //getTotalBalance()
 //getOnlineBalance()
 //getOfflineBalance()
-app.get('/api/get/balance/:userId', async (req, res) => {
+app.get('/api/get/balance',auth, async (req, res) => {
+
   try {
-    const { userId } = req.params;
+    const { userId } = req.userId;
     const balanceData = await BalanceData.findOne({ userId });
     if (!balanceData) {
       return res.status(404).json({ message: 'Balance data not found' });
@@ -177,9 +248,10 @@ app.get('/api/get/balance/:userId', async (req, res) => {
 
 //Savings API
 //AddSavingsData(savingsData)
-app.post('/api/save/savings/:userId', async (req, res) => {
+app.post('/api/save/savings',auth, async (req, res) => {
+
   try {
-    const { userId } = req.params;
+    const { userId } = req.userId;
     const { name, amount, medium } = req.body;
     const count = await SavingsData.countDocuments({ userId }); // Get the next index for the savings data
     const i = (count + 1) || 1; // Use the count as the index
@@ -199,11 +271,11 @@ app.post('/api/save/savings/:userId', async (req, res) => {
 });
 
 //getSavingsData()
-app.get('/api/get/savings/:userId', async (req, res) => {
+app.get('/api/get/savings',auth, async (req, res) => {
+  
   try {
-    const { userId } = req.params;
+    const { userId } = req.userId;
     const { i } = req.query;
-
     if (!i) {
       const savingsData = await SavingsData.find({ userId });
       if (!savingsData) {
@@ -220,9 +292,9 @@ app.get('/api/get/savings/:userId', async (req, res) => {
 });
 
 //removeSavingsElement(i)
-app.delete('/api/delete/savings/:userId', async (req, res) => {
+app.delete('/api/delete/savings',auth, async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { userId } = req.userId;
     const { i } = req.body;
     const deletedSavingsData = await SavingsData.deleteOne({ userId, index: i });
     // Check if any savings data was deleted
@@ -237,9 +309,9 @@ app.delete('/api/delete/savings/:userId', async (req, res) => {
 });
 
 //updateSavingsElement(index,newData)
-app.patch('/api/update/savings/:userId', async (req, res) => {
+app.patch('/api/update/savings',auth, async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { userId } = req.userId;
     console.log(userId);
     const { i, name, amount, medium } = req.body;
     const updatedSavingsData = await SavingsData.findOneAndUpdate(

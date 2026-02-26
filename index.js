@@ -119,7 +119,7 @@ app.post('/api/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const newCustomUserId = await getNextSequence('userId');
-    // Check if user already exists
+    
     const existingUser = await UserData.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists' });
@@ -293,8 +293,8 @@ app.post('/api/save/savings',auth, async (req, res) => {
   try {
     const { userId } = req;
     const { name, amount, medium } = req.body;
-    const count = await SavingsData.countDocuments({ userId: userId.toString() });
-    const i = (count + 1) || 1;
+    // const count = await SavingsData.countDocuments({ userId: userId.toString() });
+    const i = await getNextSequence('counter');
     const newSavingsData = new SavingsData({
       userId: userId.toString(),
       name,
@@ -317,6 +317,7 @@ app.get('/api/get/savings',auth, async (req, res) => {
     const { index } = req.query;
     if (!index) {
       const savingsData = await SavingsData.find({ userId: userId.toString() }).sort({ date: -1 });
+      // const savingsData = await SavingsData.find({ userId: userId.toString() });
       return res.status(200).json(savingsData);
     }
     const savingsData = await SavingsData.findOne({ userId: userId.toString(), index: parseInt(index) });
@@ -347,6 +348,7 @@ app.delete('/api/delete/savings',auth, async (req, res) => {
 app.patch('/api/update/savings',auth, async (req, res) => {
   try {
     const { userId } = req;
+    console.log(req);
     const { index, name, amount, medium } = req.body;
     const updatedSavingsData = await SavingsData.findOneAndUpdate(
       { userId: userId.toString(), index: parseInt(index) },

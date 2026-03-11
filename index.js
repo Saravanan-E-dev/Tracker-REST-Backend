@@ -195,7 +195,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-app.post('api/generate/authkey',auth,async(req,res) =>{
+app.post('/api/generate/authkey',auth,async(req,res) =>{
   try{
     const {userId} = req;
     const authKey = crypto.randomBytes(16).toString('hex');
@@ -210,34 +210,33 @@ app.post('api/generate/authkey',auth,async(req,res) =>{
   }
 })
 
-app.post('api/send/expenses',checkExternalAuth,async(req,res) =>{
+app.post('/api/send/expenses',checkExternalAuth,async(req,res) =>{
   try{
     const {UserId} = req.user;
     let userExpenses = []
     userExpenses = req.body.userSpecificExpenses;
     let i = await getNextSequence('externalExpense');
 
-    for(let i = 0; i<userExpenses.length;i++){
-      const {purpose,amount,date} = userExpenses.pop();
+    for(const item of userExpenses){
+      const {purpose,amount,date} = item;
       const ExternalData = new ExternalExpenseData({
         userId:UserId.toString(),
         purpose,
         amount,
-        data,
+        date,
         index: i,
       })
 
       const savedExternalExpense = await ExternalData.save();
-      res.status(200).json({message: 'External Data added to Temp Database'});
-
     }
+    res.status(200).json({message: 'External Data added to Temp Database'});
   }catch(error){
     res.status(500).json({message:'Error saving External Data'});
     console.log(error);
   }
 })
 
-app.post('api/transfer/externaltoexpense',auth,async(req,res) =>{
+app.post('/api/transfer/externaltoexpense',auth,async(req,res) =>{
   try{
     const {userId,index,accountId} = req;
     const deletedData = await ExternalExpenseData.findOneAndDelete({userId:userId,index:index});
@@ -263,7 +262,7 @@ app.post('api/transfer/externaltoexpense',auth,async(req,res) =>{
   }
 })
 
-app.delete('api/delete/externalExpenses',auth,async(req,res) =>{
+app.delete('/api/delete/externalExpenses',auth,async(req,res) =>{
   try{
     const {userId,index} = req;
     const deletedData = await ExternalExpenseData.findOneAndDelete({userId:userId,index:index});

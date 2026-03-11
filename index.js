@@ -1,12 +1,13 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import express from 'express';
+import express, { response } from 'express';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import JWT from 'jsonwebtoken';
 import getNextSequence from './utils/userIdSequenceGenrator.js';
 import auth from './middleware/auth.js';
+import checkExternalAuth from './middleware/checkExternalAuth.js';
 import cors from 'cors';
 
 const MONGO_URI = process.env.MONGO_URI;
@@ -29,6 +30,16 @@ mongoose.connect(MONGO_URI, {
 const app = express();
 app.use(express.json());
 app.use(cors());
+
+const ExternalExpenseSchema = mongoose.Schema({
+  userId: String,
+  purpose: String,
+  amount: Number, // User's specific share amount
+  date: { type: Date, default: Date.now },
+  canAdd: {type: Boolean, default: false},
+  index: Number
+})
+
 const ExpenseDataSchema = mongoose.Schema({
   userId: String,
   amount: Number,
@@ -101,6 +112,12 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  walletAuthKey: {
+    type: String,
+    unique:true,
+    default:null,
+    sparse: true,
+  },
 });
 
 const UserData = mongoose.model('UserData', UserSchema);
@@ -109,6 +126,7 @@ const BalanceData = mongoose.model('BalanceData', BalanceSchema);
 const TransactionsData = mongoose.model('TransactionsData', TransactionsSchema);
 const ExpenseData = mongoose.model('ExpenseData', ExpenseDataSchema);
 const DigitalAccounts = mongoose.model('DigitalAccounts', DigitalAccountsSchema);
+const ExternalExpenseData = mongoose.model('ExternalExpenseData',ExternalExpenseSchema);
 
 app.get('/', (req, res) => {
   res.json({ message: 'working' });
@@ -176,6 +194,90 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ message: 'Error logging in user' });
   }
 });
+
+app.post('api/generate/authkey',auth,async(req,res) =>{
+  try{
+    const {userId} = req;
+    const authKey = crypto.randomBytes(16).toString('hex');
+    const userDataResponse = await UserData.findOneAndUpdate(
+      {userId:userId.toString()},
+      {$set:{walletAuthKey:authKey}},
+      {new: true},
+    )
+    res.status(200).json({ message: 'Auth API Key Generated Succesfully', AuthKey: userDataResponse.walletAuthKey });
+  }catch{
+    res.status(500).json({message:"Error generating API Auth Key"});
+  }
+})
+
+app.post('api/send/expenses',checkExternalAuth,async(req,res) =>{
+  try{
+    const {UserId} = req.user;
+    let userExpenses = []
+    userExpenses = req.body.userSpecificExpenses;
+    let i = await getNextSequence('externalExpense');
+
+    for(let i = 0; i<userExpenses.length;i++){
+      const {purpose,amount,date} = userExpenses.pop();
+      const ExternalData = new ExternalExpenseData({
+        userId:UserId.toString(),
+        purpose,
+        amount,
+        data,
+        index: i,
+      })
+
+      const savedExternalExpense = await ExternalData.save();
+      res.status(200).json({message: 'External Data added to Temp Database'});
+
+    }
+  }catch(error){
+    res.status(500).json({message:'Error saving External Data'});
+    console.log(error);
+  }
+})
+
+app.post('api/transfer/externaltoexpense',auth,async(req,res) =>{
+  try{
+    const {userId,index,accountId} = req;
+    const deletedData = await ExternalExpenseData.findOneAndDelete({userId:userId,index:index});
+
+    if (!deletedData) {
+      return res.status(404).json({ message: 'Data not found' });
+    }
+
+    const saveData = await new ExpenseData({
+      userId: userId.toString(),
+      amount: deletedData.amount,
+      remark: deletedData.purpose,
+      spentFromState: "online",
+      accountId,
+    });
+
+    const savedData = await saveData.save();
+    res.status(200).json({message:"Expense data saved succesfully"})
+
+  }catch(error){
+    res.status(500).json({message:'error adding the expense'});
+    console.log(error);
+  }
+})
+
+app.delete('api/delete/externalExpenses',auth,async(req,res) =>{
+  try{
+    const {userId,index} = req;
+    const deletedData = await ExternalExpenseData.findOneAndDelete({userId:userId,index:index});
+
+    if (!deletedData) {
+      return res.status(404).json({ message: 'Data not found' });
+    }
+
+    res.status(200).json({message:'Removed successfully'});
+  }catch(error){
+    res.status(500).json({message:'could not be deleted'});
+    console.log(error);
+  }
+})
 
 //export function getExpenseData(DataName)
 app.get('/api/get/expenses',auth, async (req, res) => {

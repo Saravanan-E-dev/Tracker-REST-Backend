@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 dotenv.config();
-
+import { randomBytes } from 'crypto';
 import express, { response } from 'express';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
@@ -197,16 +197,32 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/generate/authkey',auth,async(req,res) =>{
   try{
-    const {userId} = req;
-    const authKey = crypto.randomBytes(16).toString('hex');
+    const userId = req.user?._id || req.userId;
+    const authKey = randomBytes(16).toString('hex');
     const userDataResponse = await UserData.findOneAndUpdate(
       {userId:userId.toString()},
       {$set:{walletAuthKey:authKey}},
       {new: true},
     )
     res.status(200).json({ message: 'Auth API Key Generated Succesfully', AuthKey: userDataResponse.walletAuthKey });
-  }catch{
+  }catch(error){
+    console.log(error);
     res.status(500).json({message:"Error generating API Auth Key"});
+  }
+})
+
+app.get('/api/get/authapikey',auth,async(req,res) =>{
+  try{
+    const userId = req.user?._id || req.userId;
+    const userDataResponse = await UserData.findOne({userId:userId});
+
+    if(!userDataResponse || !userDataResponse.walletAuthKey){
+      res.status(200).json({message:"No Auth Key found for this user"});
+    }
+    res.status(200).json({AuthKey: userDataResponse.walletAuthKey});
+  }catch(error){
+    console.log(error);
+    res.status(500).json({message:"Error fetching API Auth Key"});
   }
 })
 

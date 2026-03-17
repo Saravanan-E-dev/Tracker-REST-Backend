@@ -9,6 +9,7 @@ import getNextSequence from './utils/userIdSequenceGenrator.js';
 import auth from './middleware/auth.js';
 import checkExternalAuth from './middleware/checkExternalAuth.js';
 import cors from 'cors';
+import { type } from 'os';
 
 const MONGO_URI = process.env.MONGO_URI;
 const PORT = process.env.PORT;
@@ -118,6 +119,12 @@ const UserSchema = new mongoose.Schema({
     default:null,
     sparse: true,
   },
+  defaultAccount: {
+    type: String,
+    unique: true,
+    sparse: true,
+    default: null,
+  },
 });
 
 const UserData = mongoose.model('UserData', UserSchema);
@@ -195,6 +202,20 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+app.get('/api/get/userdata', auth, async (req, res) => {
+  try {
+    const userId = req.user?._id || req.userId;
+    const userData = await UserData.findOne({ userId: userId.toString() }).select('-password -_id -__v');
+    if (!userData) {
+      return res.status(404).json({ message: 'User data not found' });
+    }
+    res.status(200).json(userData);
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    res.status(500).json({ message: 'Error fetching user data' });
+  }
+});
+
 app.post('/api/generate/authkey',auth,async(req,res) =>{
   try{
     const userId = req.user?._id || req.userId;
@@ -227,13 +248,15 @@ app.get('/api/get/authapikey',auth,async(req,res) =>{
 })
 
 app.post('/api/send/expenses',checkExternalAuth,async(req,res) =>{
+  // console.log("1. Route hit!");
   try{
-    const {UserId} = req.user;
-    let userExpenses = []
-    userExpenses = req.body.userSpecificExpenses;
-    let i = await getNextSequence('externalExpense');
+    const UserId = req.userId;
+    // let userExpenses = []
+    const userExpenses = Array.isArray(req.body) ? req.body : req.body.userSpecificExpenses;
+    // console.log(UserId);
 
     for(const item of userExpenses){
+      let i = await getNextSequence('externalExpense');
       const {purpose,amount,date} = item;
       const ExternalData = new ExternalExpenseData({
         userId:UserId.toString(),
@@ -242,8 +265,9 @@ app.post('/api/send/expenses',checkExternalAuth,async(req,res) =>{
         date,
         index: i,
       })
-
+    
       const savedExternalExpense = await ExternalData.save();
+      // console.log("External Expenses saved successfully", savedExternalExpense);
     }
     res.status(200).json({message: 'External Data added to Temp Database'});
   }catch(error){
@@ -252,9 +276,21 @@ app.post('/api/send/expenses',checkExternalAuth,async(req,res) =>{
   }
 })
 
+app.get('/api/get/externalExpenses',auth,async(req,res) =>{ 
+  try{
+    const userId = req.user?._id || req.userId;
+    const externalExpenses = await ExternalExpenseData.find({userId:userId.toString()}).sort({date:-1});
+    res.status(200).json(externalExpenses);
+  }catch(error){
+    res.status(500).json({message:'Error fetching External Expenses'});
+    console.log(error);
+  }
+})
+
 app.post('/api/transfer/externaltoexpense',auth,async(req,res) =>{
   try{
-    const {userId,index,accountId} = req;
+    const userId = req.user?._id || req.userId;
+    const {index} = req.body;
     const deletedData = await ExternalExpenseData.findOneAndDelete({userId:userId,index:index});
 
     if (!deletedData) {
@@ -266,7 +302,7 @@ app.post('/api/transfer/externaltoexpense',auth,async(req,res) =>{
       amount: deletedData.amount,
       remark: deletedData.purpose,
       spentFromState: "online",
-      accountId,
+      accountId: UserData.findOne({userId:userId.toString()}).defaultAccount || null,
     });
 
     const savedData = await saveData.save();
@@ -280,9 +316,12 @@ app.post('/api/transfer/externaltoexpense',auth,async(req,res) =>{
 
 app.delete('/api/delete/externalExpenses',auth,async(req,res) =>{
   try{
-    const {userId,index} = req;
+    const userId = req.user?._id || req.userId;
+    const {index} = req.body;
+    // console.log(userId,index);
     const deletedData = await ExternalExpenseData.findOneAndDelete({userId:userId,index:index});
 
+    console.log(deletedData);
     if (!deletedData) {
       return res.status(404).json({ message: 'Data not found' });
     }
@@ -497,6 +536,12 @@ app.post('/api/save/digital-account', auth, async (req, res) => {
     });
     
     const savedAccount = await newAccount.save();
+    const defaultAccountSet = await UserData.findOneAndUpdate(
+      { userId: userId.toString(), defaultAccount: null },
+      { defaultAccount: savedAccount.id },
+      { new: true }
+    );
+
     res.status(200).json({ message: 'Digital account saved successfully', account: savedAccount });
   } catch (error) {
     console.error('Error saving digital account:', error);
@@ -543,10 +588,24 @@ app.delete('/api/delete/digital-account/:accountId', auth, async (req, res) => {
     const { userId } = req;
     const { accountId } = req.params;
     
+    const defaultAccountCheck = await UserData.findOne({ userId: userId.toString(), defaultAccount: accountId });
+    if (defaultAccountCheck) {
+      await UserData.findOneAndUpdate(
+        { userId: userId.toString() },
+        { $set: { defaultAccount: null } }
+      );
+    }
+
     const deletedAccount = await DigitalAccounts.findOneAndDelete({
       userId: userId.toString(),
       id: accountId
     });
+
+    const defaultAccountSet = await UserData.findOneAndUpdate(
+      { userId: userId.toString(), defaultAccount: null },
+      { defaultAccount: await DigitalAccounts.findOne({ userId: userId.toString() }).sort({ createdAt: -1 }).select('id') },
+      { new: true }
+    );
     
     if (!deletedAccount) {
       return res.status(404).json({ message: 'Account not found' });

@@ -1,16 +1,30 @@
-import dotenv from 'dotenv';
+import dotenv, { decrypt } from 'dotenv';
 dotenv.config();
 import { randomBytes } from 'crypto';
 import express, { response } from 'express';
 import mongoose from 'mongoose';
+import { createClient } from "redis";
 import bcrypt from 'bcryptjs';
 import JWT from 'jsonwebtoken';
 import getNextSequence from './utils/userIdSequenceGenrator.js';
 import auth from './middleware/auth.js';
 import checkExternalAuth from './middleware/checkExternalAuth.js';
 import cors from 'cors';
-import { type } from 'os';
+import { getBinanceData } from './utils/getBinanceData.js';
+import { encrypt } from './utils/encrypt.js';
 
+
+const redisClient = createClient({
+  password: process.env.REDIS_PASSWORD, // Extract this from your URL
+  socket: {
+    host: process.env.REDIS_URL, // e.g. redis-123.c1.us-east-1.ec2.cloud.redislabs.com
+    port: process.env.REDIS_PORT              // e.g. 12345
+  }
+});
+
+redisClient.on('error', (error) => console.log('Redis Client Error', error));
+redisClient.connect();
+console.log("Connected to redis cloud")
 const MONGO_URI = process.env.MONGO_URI;
 const PORT = process.env.PORT;
 // console.log(PORT, MONGO_URI);
@@ -37,7 +51,7 @@ const ExternalExpenseSchema = mongoose.Schema({
   purpose: String,
   amount: Number, // User's specific share amount
   date: { type: Date, default: Date.now },
-  canAdd: {type: Boolean, default: false},
+  canAdd: { type: Boolean, default: false },
   index: Number
 })
 
@@ -115,8 +129,8 @@ const UserSchema = new mongoose.Schema({
   },
   walletAuthKey: {
     type: String,
-    unique:true,
-    default:null,
+    unique: true,
+    default: null,
     sparse: true,
   },
   defaultAccount: {
@@ -125,6 +139,12 @@ const UserSchema = new mongoose.Schema({
     sparse: true,
     default: null,
   },
+  binance: {
+    apiKey: { type: String, default: null },      
+    apiSecret: { type: String, default: null },   
+    iv: { type: String, default: null },          // The IV needed for decryption
+  },
+
 });
 
 const UserData = mongoose.model('UserData', UserSchema);
@@ -133,7 +153,7 @@ const BalanceData = mongoose.model('BalanceData', BalanceSchema);
 const TransactionsData = mongoose.model('TransactionsData', TransactionsSchema);
 const ExpenseData = mongoose.model('ExpenseData', ExpenseDataSchema);
 const DigitalAccounts = mongoose.model('DigitalAccounts', DigitalAccountsSchema);
-const ExternalExpenseData = mongoose.model('ExternalExpenseData',ExternalExpenseSchema);
+const ExternalExpenseData = mongoose.model('ExternalExpenseData', ExternalExpenseSchema);
 
 app.get('/', (req, res) => {
   res.json({ message: 'working' });
@@ -144,7 +164,7 @@ app.post('/api/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const newCustomUserId = await getNextSequence('userId');
-    
+
     const existingUser = await UserData.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists' });
@@ -160,8 +180,8 @@ app.post('/api/register', async (req, res) => {
     const savedUser = await newUser.save();
     // Generate JWT token
     const token = JWT.sign({ userId: savedUser.userId }, process.env.JWT_SECRET);
-    res.status(201).json({ 
-      message: 'User registered successfully', 
+    res.status(201).json({
+      message: 'User registered successfully',
       token,
       userId: savedUser.userId,
       username: savedUser.username,
@@ -189,8 +209,8 @@ app.post('/api/login', async (req, res) => {
     }
     // Generate JWT token
     const token = JWT.sign({ userId: user.userId }, process.env.JWT_SECRET);
-    res.status(200).json({ 
-      message: 'Login successful', 
+    res.status(200).json({
+      message: 'Login successful',
       token,
       userId: user.userId,
       username: user.username,
@@ -216,82 +236,82 @@ app.get('/api/get/userdata', auth, async (req, res) => {
   }
 });
 
-app.post('/api/generate/authkey',auth,async(req,res) =>{
-  try{
+app.post('/api/generate/authkey', auth, async (req, res) => {
+  try {
     const userId = req.user?._id || req.userId;
     const authKey = randomBytes(16).toString('hex');
     const userDataResponse = await UserData.findOneAndUpdate(
-      {userId:userId.toString()},
-      {$set:{walletAuthKey:authKey}},
-      {new: true},
+      { userId: userId.toString() },
+      { $set: { walletAuthKey: authKey } },
+      { new: true },
     )
     res.status(200).json({ message: 'Auth API Key Generated Succesfully', AuthKey: userDataResponse.walletAuthKey });
-  }catch(error){
+  } catch (error) {
     console.log(error);
-    res.status(500).json({message:"Error generating API Auth Key"});
+    res.status(500).json({ message: "Error generating API Auth Key" });
   }
 })
 
-app.get('/api/get/authapikey',auth,async(req,res) =>{
-  try{
+app.get('/api/get/authapikey', auth, async (req, res) => {
+  try {
     const userId = req.user?._id || req.userId;
-    const userDataResponse = await UserData.findOne({userId:userId});
+    const userDataResponse = await UserData.findOne({ userId: userId });
 
-    if(!userDataResponse || !userDataResponse.walletAuthKey){
-      res.status(200).json({message:"No Auth Key found for this user"});
+    if (!userDataResponse || !userDataResponse.walletAuthKey) {
+      res.status(200).json({ message: "No Auth Key found for this user" });
     }
-    res.status(200).json({AuthKey: userDataResponse.walletAuthKey});
-  }catch(error){
+    res.status(200).json({ AuthKey: userDataResponse.walletAuthKey });
+  } catch (error) {
     console.log(error);
-    res.status(500).json({message:"Error fetching API Auth Key"});
+    res.status(500).json({ message: "Error fetching API Auth Key" });
   }
 })
 
-app.post('/api/send/expenses',checkExternalAuth,async(req,res) =>{
+app.post('/api/send/expenses', checkExternalAuth, async (req, res) => {
   // console.log("1. Route hit!");
-  try{
+  try {
     const UserId = req.userId;
     // let userExpenses = []
     const userExpenses = Array.isArray(req.body) ? req.body : req.body.userSpecificExpenses;
     // console.log(UserId);
 
-    for(const item of userExpenses){
+    for (const item of userExpenses) {
       let i = await getNextSequence('externalExpense');
-      const {purpose,amount,date} = item;
+      const { purpose, amount, date } = item;
       const ExternalData = new ExternalExpenseData({
-        userId:UserId.toString(),
+        userId: UserId.toString(),
         purpose,
         amount,
         date,
         index: i,
       })
-    
+
       const savedExternalExpense = await ExternalData.save();
       // console.log("External Expenses saved successfully", savedExternalExpense);
     }
-    res.status(200).json({message: 'External Data added to Temp Database'});
-  }catch(error){
-    res.status(500).json({message:'Error saving External Data'});
+    res.status(200).json({ message: 'External Data added to Temp Database' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error saving External Data' });
     console.log(error);
   }
 })
 
-app.get('/api/get/externalExpenses',auth,async(req,res) =>{ 
-  try{
+app.get('/api/get/externalExpenses', auth, async (req, res) => {
+  try {
     const userId = req.user?._id || req.userId;
-    const externalExpenses = await ExternalExpenseData.find({userId:userId.toString()}).sort({date:-1});
+    const externalExpenses = await ExternalExpenseData.find({ userId: userId.toString() }).sort({ date: -1 });
     res.status(200).json(externalExpenses);
-  }catch(error){
-    res.status(500).json({message:'Error fetching External Expenses'});
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching External Expenses' });
     console.log(error);
   }
 })
 
-app.post('/api/transfer/externaltoexpense',auth,async(req,res) =>{
-  try{
+app.post('/api/transfer/externaltoexpense', auth, async (req, res) => {
+  try {
     const userId = req.user?._id || req.userId;
-    const {index} = req.body;
-    const deletedData = await ExternalExpenseData.findOneAndDelete({userId:userId,index:index});
+    const { index } = req.body;
+    const deletedData = await ExternalExpenseData.findOneAndDelete({ userId: userId, index: index });
 
     if (!deletedData) {
       return res.status(404).json({ message: 'Data not found' });
@@ -302,39 +322,39 @@ app.post('/api/transfer/externaltoexpense',auth,async(req,res) =>{
       amount: deletedData.amount,
       remark: deletedData.purpose,
       spentFromState: "online",
-      accountId: UserData.findOne({userId:userId.toString()}).defaultAccount || null,
+      accountId: UserData.findOne({ userId: userId.toString() }).defaultAccount || null,
     });
 
     const savedData = await saveData.save();
-    res.status(200).json({message:"Expense data saved succesfully"})
+    res.status(200).json({ message: "Expense data saved succesfully" })
 
-  }catch(error){
-    res.status(500).json({message:'error adding the expense'});
+  } catch (error) {
+    res.status(500).json({ message: 'error adding the expense' });
     console.log(error);
   }
 })
 
-app.delete('/api/delete/externalExpenses',auth,async(req,res) =>{
-  try{
+app.delete('/api/delete/externalExpenses', auth, async (req, res) => {
+  try {
     const userId = req.user?._id || req.userId;
-    const {index} = req.body;
+    const { index } = req.body;
     // console.log(userId,index);
-    const deletedData = await ExternalExpenseData.findOneAndDelete({userId:userId,index:index});
+    const deletedData = await ExternalExpenseData.findOneAndDelete({ userId: userId, index: index });
 
     console.log(deletedData);
     if (!deletedData) {
       return res.status(404).json({ message: 'Data not found' });
     }
 
-    res.status(200).json({message:'Removed successfully'});
-  }catch(error){
-    res.status(500).json({message:'could not be deleted'});
+    res.status(200).json({ message: 'Removed successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'could not be deleted' });
     console.log(error);
   }
 })
 
 //export function getExpenseData(DataName)
-app.get('/api/get/expenses',auth, async (req, res) => {
+app.get('/api/get/expenses', auth, async (req, res) => {
   try {
     const { userId } = req;
     //find the expense data for the user
@@ -351,7 +371,7 @@ app.get('/api/get/expenses',auth, async (req, res) => {
 
 
 //export function setTransactions(DataObject)
-app.post('/api/save/transaction',auth, async (req, res) => {
+app.post('/api/save/transaction', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { amount, remark, medium, accountId, spentFromState, timestamp } = req.body;
@@ -373,7 +393,7 @@ app.post('/api/save/transaction',auth, async (req, res) => {
 });
 
 //export function getTransactions()
-app.get('/api/get/transactions',auth, async (req, res) => {
+app.get('/api/get/transactions', auth, async (req, res) => {
   try {
     const { userId } = req;
     const transactionsData = await TransactionsData.find({ userId: userId.toString() }).sort({ date: -1 });
@@ -387,7 +407,7 @@ app.get('/api/get/transactions',auth, async (req, res) => {
 //Balance API
 //AddOnlineBalance(BalanceData),
 //AddOfflineBalance(BalanceData)
-app.post('/api/save/balance',auth, async (req, res) => {
+app.post('/api/save/balance', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { totalBalance, offlineBalance, onlineBalances } = req.body;
@@ -421,7 +441,7 @@ app.post('/api/save/balance',auth, async (req, res) => {
 //getTotalBalance()
 //getOnlineBalance()
 //getOfflineBalance()
-app.get('/api/get/balance',auth, async (req, res) => {
+app.get('/api/get/balance', auth, async (req, res) => {
   try {
     const { userId } = req;
     const balanceData = await BalanceData.findOne({ userId: userId.toString() });
@@ -445,7 +465,7 @@ app.get('/api/get/balance',auth, async (req, res) => {
 
 //Savings API
 //AddSavingsData(savingsData)
-app.post('/api/save/savings',auth, async (req, res) => {
+app.post('/api/save/savings', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { name, amount, medium } = req.body;
@@ -466,8 +486,99 @@ app.post('/api/save/savings',auth, async (req, res) => {
   }
 });
 
+
+app.post('/api/set/binance-api-keys', auth, async (req, res) => {
+  try {
+    const { userId } = req;
+    const { apiKey, apiSecret } = req.body;
+    const encryptedKeyData = encrypt(apiKey);
+    const encryptedSecretData = encrypt(apiSecret);
+
+    const updatedUser = await UserData.findOneAndUpdate(
+      { userId: userId.toString() },
+      {
+        "binance.apiKey": encryptedKeyData.encryptedData,
+        "binance.apiSecret": encryptedSecretData.encryptedData,
+        "binance.iv": encryptedKeyData.iv,
+    },
+    { new: true }
+    );
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.status(200).json({ message: 'Binance API keys updated successfully' });
+  } catch (error) {
+    console.error('Error setting Binance API keys:', error);
+    res.status(500).json({ message: 'Error setting Binance API keys' });
+  }
+});
+
+
+app.post('/api/remove/binance-api-keys', auth, async (req, res) => {
+  try {
+    const { userId } = req;
+    const updatedUser = await UserData.findOneAndUpdate(
+      { userId: userId.toString() },
+      {
+        "binance.apiKey": null,
+        "binance.apiSecret": null,
+        "binance.iv": null
+      },
+      { new: true }
+    );
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.status(200).json({ message: 'Binance API keys removed successfully' });
+  } catch (error) {
+    console.error('Error removing Binance API keys:', error);
+    res.status(500).json({ message: 'Error removing Binance API keys' });
+  }
+});
+
+app.get('/api/check/binance-keys', auth, async (req, res) => {
+  try {
+    const { userId } = req;
+    const userData = await UserData.findOne({ userId: userId.toString() });
+    if (!userData) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    const hasKeys = userData.binance.apiKey && userData.binance.apiSecret && userData.binance.iv;
+    res.status(200).json({ hasKeys: !!hasKeys });
+  } catch (error) {
+    console.error('Error checking Binance API keys:', error);
+    res.status(500).json({ message: 'Error checking Binance API keys' });
+  }
+});
+
+
+//get data from binance api
+app.get('/api/get/binancedata', auth, async (req, res) => {
+  try {
+    const { userId } = req;
+    const binanceData = await redisClient.get(`binanceData:${userId.toString()}`);
+    const binanceKeys = await UserData.findOne({ userId: userId.toString() }).select('binance.apiKey binance.apiSecret binance.iv');
+    
+    const binanceAPI = decrypt(binanceKeys.binance.apiKey, binanceKeys.binance.iv);
+    const binanceSecret = decrypt(binanceKeys.binance.apiSecret, binanceKeys.binance.iv);
+
+    if (!binanceData) {
+      const freshData = await getBinanceData(binanceAPI, binanceSecret);
+      await redisClient.set(`binanceData:${userId.toString()}`, JSON.stringify(freshData), {
+        EX: 300, // Cache for 5 minutes
+      });
+      return res.status(200).json(freshData);
+    }
+
+    res.status(200).json(JSON.parse(binanceData));
+  } catch (error) {
+    console.error('Error fetching Binance data:', error);
+    res.status(500).json({ message: 'Error fetching Binance data' });
+  }
+});
+
 //getSavingsData()
-app.get('/api/get/savings',auth, async (req, res) => {
+app.get('/api/get/savings', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { index } = req.query;
@@ -485,7 +596,7 @@ app.get('/api/get/savings',auth, async (req, res) => {
 });
 
 //removeSavingsElement(i)
-app.delete('/api/delete/savings',auth, async (req, res) => {
+app.delete('/api/delete/savings', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { index } = req.body;
@@ -501,7 +612,7 @@ app.delete('/api/delete/savings',auth, async (req, res) => {
 });
 
 //updateSavingsElement(index,newData)
-app.patch('/api/update/savings',auth, async (req, res) => {
+app.patch('/api/update/savings', auth, async (req, res) => {
   try {
     const { userId } = req;
     console.log(req);
@@ -526,7 +637,7 @@ app.post('/api/save/digital-account', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { name, balance, type } = req.body;
-    
+
     const newAccount = new DigitalAccounts({
       userId: userId.toString(),
       id: Date.now().toString(),
@@ -534,7 +645,7 @@ app.post('/api/save/digital-account', auth, async (req, res) => {
       balance,
       type
     });
-    
+
     const savedAccount = await newAccount.save();
     const defaultAccountSet = await UserData.findOneAndUpdate(
       { userId: userId.toString(), defaultAccount: null },
@@ -565,17 +676,17 @@ app.put('/api/update/digital-account/:accountId', auth, async (req, res) => {
     const { userId } = req;
     const { accountId } = req.params;
     const updates = req.body;
-    
+
     const updatedAccount = await DigitalAccounts.findOneAndUpdate(
       { userId: userId.toString(), id: accountId },
       updates,
       { new: true }
     );
-    
+
     if (!updatedAccount) {
       return res.status(404).json({ message: 'Account not found' });
     }
-    
+
     res.status(200).json({ message: 'Account updated successfully', account: updatedAccount });
   } catch (error) {
     console.error('Error updating digital account:', error);
@@ -587,7 +698,7 @@ app.delete('/api/delete/digital-account/:accountId', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { accountId } = req.params;
-    
+
     const defaultAccountCheck = await UserData.findOne({ userId: userId.toString(), defaultAccount: accountId });
     if (defaultAccountCheck) {
       await UserData.findOneAndUpdate(
@@ -606,11 +717,11 @@ app.delete('/api/delete/digital-account/:accountId', auth, async (req, res) => {
       { defaultAccount: await DigitalAccounts.findOne({ userId: userId.toString() }).sort({ createdAt: -1 }).select('id') },
       { new: true }
     );
-    
+
     if (!deletedAccount) {
       return res.status(404).json({ message: 'Account not found' });
     }
-    
+
     res.status(200).json({ message: 'Account deleted successfully' });
   } catch (error) {
     console.error('Error deleting digital account:', error);
@@ -623,7 +734,7 @@ app.post('/api/save/expense', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { amount, remark, spentFromState, accountId } = req.body;
-    
+
     const newExpense = new ExpenseData({
       userId: userId.toString(),
       amount,
@@ -632,7 +743,7 @@ app.post('/api/save/expense', auth, async (req, res) => {
       accountId,
       timestamp: Date.now()
     });
-    
+
     const savedExpense = await newExpense.save();
     res.status(200).json({ message: 'Expense saved successfully', expense: savedExpense });
   } catch (error) {

@@ -544,6 +544,7 @@ app.get('/api/check/binance-keys', auth, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
     const hasKeys = userData.binance.apiKey && userData.binance.apiSecret && userData.binance.iv;
+    console.log(!!hasKeys);
     res.status(200).json({ hasKeys: !!hasKeys });
   } catch (error) {
     console.error('Error checking Binance API keys:', error);

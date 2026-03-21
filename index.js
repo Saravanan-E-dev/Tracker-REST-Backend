@@ -1,4 +1,4 @@
-import dotenv, { decrypt } from 'dotenv';
+import dotenv from 'dotenv';
 dotenv.config();
 import { randomBytes } from 'crypto';
 import express, { response } from 'express';
@@ -12,6 +12,7 @@ import checkExternalAuth from './middleware/checkExternalAuth.js';
 import cors from 'cors';
 import { getBinanceData } from './utils/getBinanceData.js';
 import { encrypt } from './utils/encrypt.js';
+import { decrypt } from './utils/decrypt.js';
 
 
 const redisClient = createClient({
@@ -491,15 +492,18 @@ app.post('/api/set/binance-api-keys', auth, async (req, res) => {
   try {
     const { userId } = req;
     const { apiKey, apiSecret } = req.body;
-    const encryptedKeyData = encrypt(apiKey);
-    const encryptedSecretData = encrypt(apiSecret);
+
+    const sharedIv = randomBytes(16).toString('hex');
+
+    const encryptedKeyData = encrypt(apiKey,sharedIv);
+    const encryptedSecretData = encrypt(apiSecret,sharedIv);
 
     const updatedUser = await UserData.findOneAndUpdate(
       { userId: userId.toString() },
       {
         "binance.apiKey": encryptedKeyData.encryptedData,
         "binance.apiSecret": encryptedSecretData.encryptedData,
-        "binance.iv": encryptedKeyData.iv,
+        "binance.iv": sharedIv,
     },
     { new: true }
     );
@@ -557,12 +561,14 @@ app.get('/api/check/binance-keys', auth, async (req, res) => {
 app.get('/api/get/binancedata', auth, async (req, res) => {
   try {
     const { userId } = req;
+    
+
     const binanceData = await redisClient.get(`binanceData:${userId.toString()}`);
     const binanceKeys = await UserData.findOne({ userId: userId.toString() }).select('binance.apiKey binance.apiSecret binance.iv');
     
     const binanceAPI = decrypt(binanceKeys.binance.apiKey, binanceKeys.binance.iv);
     const binanceSecret = decrypt(binanceKeys.binance.apiSecret, binanceKeys.binance.iv);
-
+    
     if (!binanceData) {
       const freshData = await getBinanceData(binanceAPI, binanceSecret);
       await redisClient.set(`binanceData:${userId.toString()}`, JSON.stringify(freshData), {

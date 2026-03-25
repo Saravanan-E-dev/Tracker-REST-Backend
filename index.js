@@ -141,8 +141,8 @@ const UserSchema = new mongoose.Schema({
     default: null,
   },
   binance: {
-    apiKey: { type: String, default: null },      
-    apiSecret: { type: String, default: null },   
+    apiKey: { type: String, default: null },
+    apiSecret: { type: String, default: null },
     iv: { type: String, default: null },          // The IV needed for decryption
   },
 
@@ -495,8 +495,8 @@ app.post('/api/set/binance-api-keys', auth, async (req, res) => {
 
     const sharedIv = randomBytes(16).toString('hex');
 
-    const encryptedKeyData = encrypt(apiKey,sharedIv);
-    const encryptedSecretData = encrypt(apiSecret,sharedIv);
+    const encryptedKeyData = encrypt(apiKey, sharedIv);
+    const encryptedSecretData = encrypt(apiSecret, sharedIv);
 
     const updatedUser = await UserData.findOneAndUpdate(
       { userId: userId.toString() },
@@ -504,8 +504,8 @@ app.post('/api/set/binance-api-keys', auth, async (req, res) => {
         "binance.apiKey": encryptedKeyData.encryptedData,
         "binance.apiSecret": encryptedSecretData.encryptedData,
         "binance.iv": sharedIv,
-    },
-    { new: true }
+      },
+      { new: true }
     );
     if (!updatedUser) {
       return res.status(404).json({ message: 'User not found' });
@@ -548,7 +548,7 @@ app.get('/api/check/binance-keys', auth, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
     const hasKeys = userData.binance.apiKey && userData.binance.apiSecret && userData.binance.iv;
-    
+
     res.status(200).json({ hasKeys: !!hasKeys });
   } catch (error) {
     console.error('Error checking Binance API keys:', error);
@@ -561,23 +561,25 @@ app.get('/api/check/binance-keys', auth, async (req, res) => {
 app.get('/api/get/binancedata', auth, async (req, res) => {
   try {
     const { userId } = req;
-    
 
     const binanceData = await redisClient.get(`binanceData:${userId.toString()}`);
-    const binanceKeys = await UserData.findOne({ userId: userId.toString() }).select('binance.apiKey binance.apiSecret binance.iv');
-    
-    const binanceAPI = decrypt(binanceKeys.binance.apiKey, binanceKeys.binance.iv);
-    const binanceSecret = decrypt(binanceKeys.binance.apiSecret, binanceKeys.binance.iv);
-    
-    if (!binanceData) {
-      const freshData = await getBinanceData(binanceAPI, binanceSecret);
-      await redisClient.set(`binanceData:${userId.toString()}`, JSON.stringify(freshData), {
-        EX: 300, // Cache for 5 minutes
-      });
-      return res.status(200).json(freshData);
+
+    if (binanceData) {
+      return res.status(200).json(JSON.parse(binanceData));
     }
 
-    res.status(200).json(JSON.parse(binanceData));
+    const binanceKeys = await UserData.findOne({ userId: userId.toString() }).select('binance.apiKey binance.apiSecret binance.iv');
+
+    const binanceAPI = await decrypt(binanceKeys.binance.apiKey, binanceKeys.binance.iv);
+    const binanceSecret = await decrypt(binanceKeys.binance.apiSecret, binanceKeys.binance.iv);
+
+    const freshData = await getBinanceData(binanceAPI, binanceSecret);
+    await redisClient.set(`binanceData:${userId.toString()}`, JSON.stringify(freshData), {
+      EX: 300, // Cache for 5 minutes
+    });
+    return res.status(200).json(freshData);
+
+
   } catch (error) {
     console.error('Error fetching Binance data:', error);
     res.status(500).json({ message: 'Error fetching Binance data' });
